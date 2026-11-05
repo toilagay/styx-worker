@@ -1,0 +1,2 @@
+# styx-worker
+worker
